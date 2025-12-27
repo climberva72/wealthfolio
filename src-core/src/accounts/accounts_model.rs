@@ -15,6 +15,7 @@ pub struct Account {
     pub currency: String,
     pub is_default: bool,
     pub is_active: bool,
+    pub is_virtual: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub platform_id: Option<String>,
@@ -32,6 +33,7 @@ pub struct NewAccount {
     pub currency: String,
     pub is_default: bool,
     pub is_active: bool,
+    pub is_virtual: bool,
     pub platform_id: Option<String>,
 }
 
@@ -106,9 +108,22 @@ pub struct AccountDB {
     pub currency: String,
     pub is_default: bool,
     pub is_active: bool,
+    pub is_virtual: bool,
     #[diesel(skip_insertion)]
     pub created_at: NaiveDateTime,
     #[diesel(skip_insertion)]
+    pub updated_at: NaiveDateTime,
+    pub platform_id: Option<String>,
+}
+
+#[derive(AsChangeset, Debug, Clone)]
+#[diesel(table_name = crate::schema::accounts)]
+pub struct AccountUpdateDB {
+    pub name: String,
+    pub account_type: String,
+    pub group: Option<String>,
+    pub is_default: bool,
+    pub is_active: bool,
     pub updated_at: NaiveDateTime,
     pub platform_id: Option<String>,
 }
@@ -124,6 +139,7 @@ impl From<AccountDB> for Account {
             currency: db.currency,
             is_default: db.is_default,
             is_active: db.is_active,
+            is_virtual: db.is_virtual,
             created_at: db.created_at,
             updated_at: db.updated_at,
             platform_id: db.platform_id,
@@ -142,6 +158,7 @@ impl From<NewAccount> for AccountDB {
             currency: domain.currency,
             is_default: domain.is_default,
             is_active: domain.is_active,
+            is_virtual: domain.is_virtual,
             created_at: now,
             updated_at: now,
             platform_id: domain.platform_id,
@@ -149,17 +166,14 @@ impl From<NewAccount> for AccountDB {
     }
 }
 
-impl From<AccountUpdate> for AccountDB {
+impl From<AccountUpdate> for AccountUpdateDB {
     fn from(domain: AccountUpdate) -> Self {
         Self {
-            id: domain.id.unwrap_or_default(),
             name: domain.name,
             account_type: domain.account_type,
             group: domain.group,
-            currency: String::new(), // This will be filled from existing record
             is_default: domain.is_default,
             is_active: domain.is_active,
-            created_at: NaiveDateTime::default(), // This will be filled from existing record
             updated_at: chrono::Utc::now().naive_utc(),
             platform_id: domain.platform_id,
         }

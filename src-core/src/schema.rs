@@ -1,6 +1,20 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    account_allocations (id) {
+        id -> Text,
+        virtual_account_id -> Text,
+        source_account_id -> Text,
+        asset_id -> Text,
+        allocation_type -> Text,
+        allocation_value -> Text,
+        effective_from -> Text,
+        effective_to -> Nullable<Text>,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
     accounts (id) {
         id -> Text,
         name -> Text,
@@ -12,6 +26,7 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         platform_id -> Nullable<Text>,
+        is_virtual -> Bool,
     }
 }
 
@@ -188,6 +203,7 @@ diesel::joinable!(goals_allocation -> goals (goal_id));
 diesel::joinable!(quotes -> assets (symbol));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    account_allocations,
     accounts,
     activities,
     activity_import_profiles,

@@ -135,7 +135,6 @@ export function AccountForm({ defaultValues, onSuccess = () => undefined }: Acco
               )}
             />
           ) : null}
-
           <FormField
             control={form.control}
             name="isDefault"
@@ -162,6 +161,21 @@ export function AccountForm({ defaultValues, onSuccess = () => undefined }: Acco
               </FormItem>
             )}
           />
+          {!defaultValues?.id ? (
+            <FormField
+              control={form.control}
+              name="isVirtual"
+              render={({ field }) => (
+                <FormItem className="flex items-center">
+                  <FormControl>
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
+                  <FormLabel className="space-y-0 pl-2"> Virtual Account</FormLabel>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ) : null}
         </div>
         <DialogFooter className="gap-2">
           <DialogTrigger asChild>

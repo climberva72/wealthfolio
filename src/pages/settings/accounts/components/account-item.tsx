@@ -30,6 +30,7 @@ export function AccountItem({ account, onEdit, onDelete }: AccountItemProps) {
         </div>
       </div>
       <div className="flex items-center space-x-4">
+        {account.isVirtual && <Badge variant="secondary">Virtual</Badge>}
         {!account.isActive && <Badge variant="secondary">Disabled</Badge>}
         <AccountOperations account={account} onEdit={onEdit} onDelete={onDelete} />
       </div>

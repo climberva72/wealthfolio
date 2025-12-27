@@ -175,6 +175,10 @@ pub fn run() {
             commands::account::create_account,
             commands::account::update_account,
             commands::account::delete_account,
+            // Allocation commands
+            commands::account_allocations::create_account_allocation,
+            commands::account_allocations::list_account_allocations,
+            commands::account_allocations::delete_account_allocation,
             // Activity commands
             commands::activity::search_activities,
             commands::activity::get_activities,

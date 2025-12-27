@@ -13,6 +13,7 @@ pub struct Account {
     pub currency: String,
     pub is_default: bool,
     pub is_active: bool,
+    pub is_virtual: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub platform_id: Option<String>,
@@ -28,6 +29,7 @@ impl From<core_accounts::Account> for Account {
             currency: a.currency,
             is_default: a.is_default,
             is_active: a.is_active,
+            is_virtual: a.is_virtual,
             created_at: a.created_at,
             updated_at: a.updated_at,
             platform_id: a.platform_id,
@@ -46,6 +48,7 @@ pub struct NewAccount {
     pub currency: String,
     pub is_default: bool,
     pub is_active: bool,
+    pub is_virtual: bool,
     pub platform_id: Option<String>,
 }
 
@@ -59,6 +62,7 @@ impl From<NewAccount> for core_accounts::NewAccount {
             currency: a.currency,
             is_default: a.is_default,
             is_active: a.is_active,
+            is_virtual: a.is_virtual,
             platform_id: a.platform_id,
         }
     }

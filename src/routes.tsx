@@ -10,6 +10,7 @@ import ActivityPage from "@/pages/activity/activity-page";
 import ActivityImportPage from "@/pages/activity/import/activity-import-page";
 import AssetsPage from "@/pages/asset/assets-page";
 import DashboardPage from "@/pages/dashboard/dashboard-page";
+import AllocationPage from "@/pages/allocation/allocation-page";
 import HoldingsPage from "@/pages/holdings/holdings-page";
 import IncomePage from "@/pages/income/income-page";
 import PortfolioInsightsPage from "@/pages/insights/portfolio-insights";
@@ -71,6 +72,7 @@ export function AppRoutes() {
         <Route path="/" element={<AppLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="allocations" element={<AllocationPage />} />
           <Route path="activities" element={<ActivityPage />} />
           <Route path="activities/manage" element={<ActivityManagerPage />} />
           <Route path="holdings" element={<HoldingsPage />} />

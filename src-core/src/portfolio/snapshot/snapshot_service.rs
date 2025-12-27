@@ -1,6 +1,6 @@
 use super::holdings_calculator::HoldingsCalculator;
 use super::snapshot_repository::SnapshotRepositoryTrait;
-use crate::accounts::{Account, AccountRepositoryTrait};
+use crate::accounts::{Account, AccountAllocationRepositoryTrait, AccountRepositoryTrait};
 use crate::activities::{Activity, ActivityRepositoryTrait};
 use crate::assets::AssetRepositoryTrait;
 use crate::constants::{DECIMAL_PRECISION, PORTFOLIO_TOTAL_ACCOUNT_ID};
@@ -77,6 +77,7 @@ pub struct SnapshotService {
     account_repository: Arc<dyn AccountRepositoryTrait>,
     activity_repository: Arc<dyn ActivityRepositoryTrait>,
     snapshot_repository: Arc<dyn SnapshotRepositoryTrait>,
+    allocation_repository: Arc<dyn AccountAllocationRepositoryTrait>,
     holdings_calculator: HoldingsCalculator,
 }
 
@@ -93,6 +94,7 @@ impl SnapshotService {
         account_repository: Arc<dyn AccountRepositoryTrait>,
         activity_repository: Arc<dyn ActivityRepositoryTrait>,
         snapshot_repository: Arc<dyn SnapshotRepositoryTrait>,
+        allocation_repository: Arc<dyn AccountAllocationRepositoryTrait>,
         asset_repository: Arc<dyn AssetRepositoryTrait>,
         fx_service: Arc<dyn FxServiceTrait>,
     ) -> Self {
@@ -106,6 +108,7 @@ impl SnapshotService {
             account_repository,
             activity_repository,
             snapshot_repository,
+            allocation_repository,
             holdings_calculator,
         }
     }
@@ -121,6 +124,7 @@ impl SnapshotService {
             account_type: "AGGREGATE".to_string(), // Indicate it's a special type
             group: None,
             is_default: false,
+            is_virtual: false,
             created_at: now,
             updated_at: now,
             platform_id: None,
@@ -140,6 +144,17 @@ impl SnapshotService {
 
         let (accounts_to_process, all_activities, min_activity_date, calculation_end_date) =
             self.fetch_required_data(account_ids_param)?;
+
+        let virtual_accounts: Vec<Account> = accounts_to_process
+            .values()
+            .filter(|a| a.is_virtual)
+            .cloned()
+            .collect();
+
+        debug!(
+            "Starting snapshot calculation (Holdings Only) for virtual accounts {:?} ",
+            virtual_accounts,
+        );
 
         if accounts_to_process.is_empty() {
             warn!("No accounts found to process.");
@@ -225,6 +240,10 @@ impl SnapshotService {
             }
         }
 
+        if !virtual_accounts.is_empty() {
+            self.calculate_virtual_account_snapshots(&virtual_accounts)
+                .await?;
+        }
         Ok(keyframes_to_save.len())
     }
 
@@ -298,6 +317,320 @@ impl SnapshotService {
             min_activity_date,
             calculation_end_date,
         ))
+    }
+
+    async fn calculate_virtual_account_snapshots(
+        &self,
+        virtual_accounts: &[Account],
+    ) -> Result<usize> {
+        debug!(
+            "Starting calculation of VIRTUAL account snapshots for {} accounts",
+            virtual_accounts.len()
+        );
+
+        // Build keyframe map (still useful for fast lookups inside generate_virtual_snapshot_for_date)
+        let all_keyframes = self
+            .snapshot_repository
+            .get_all_active_account_snapshots(None, None)?;
+
+        let mut keyframes_by_account: HashMap<String, BTreeMap<NaiveDate, AccountStateSnapshot>> =
+            HashMap::new();
+
+        // Track the latest snapshot date we have (for end date)
+        let mut max_snapshot_date: Option<NaiveDate> = None;
+
+        for kf in all_keyframes {
+            max_snapshot_date = Some(match max_snapshot_date {
+                Some(d) => d.max(kf.snapshot_date),
+                None => kf.snapshot_date,
+            });
+
+            keyframes_by_account
+                .entry(kf.account_id.clone())
+                .or_default()
+                .insert(kf.snapshot_date, kf);
+        }
+
+        let end_date = match max_snapshot_date {
+            Some(d) => d,
+            None => {
+                debug!("No existing keyframes found. Skipping virtual snapshots.");
+                return Ok(0);
+            }
+        };
+
+        let base_ccy = self.base_currency.read().unwrap().clone();
+        let mut total_saved = 0usize;
+
+        for v in virtual_accounts {
+            let v_currency = v.currency.clone();
+
+            // ✅ derive the timeline from allocations, not from keyframe dates
+            let all_allocs = self
+                .allocation_repository
+                .list_for_virtual_account(&v.id)?; // you already have this
+
+            // If no allocations at all, wipe snapshots and continue
+            if all_allocs.is_empty() {
+                self.snapshot_repository
+                    .overwrite_all_snapshots_for_account(&v.id, &[])
+                    .await?;
+                continue;
+            }
+
+            // parse earliest effective_from
+            let start_date = all_allocs
+                .iter()
+                .filter_map(|a| chrono::DateTime::parse_from_rfc3339(&a.effective_from).ok())
+                .map(|dt| dt.date_naive())
+                .min()
+                .unwrap_or(end_date);
+
+            let mut snapshots_to_save: Vec<AccountStateSnapshot> = Vec::new();
+
+            for day in get_days_between(start_date, end_date) {
+                let allocs = self
+                    .allocation_repository
+                    .list_active_for_virtual_account_on(&v.id, day)?;
+
+                if allocs.is_empty() {
+                    continue;
+                }
+
+                let snap = self.generate_virtual_snapshot_for_date(
+                    v,
+                    day,
+                    &allocs,
+                    &keyframes_by_account,
+                    &v_currency,
+                    &base_ccy,
+                )?;
+
+                snapshots_to_save.push(snap);
+            }
+
+            self.snapshot_repository
+                .overwrite_all_snapshots_for_account(&v.id, &snapshots_to_save)
+                .await?;
+
+            total_saved += snapshots_to_save.len();
+        }
+
+        Ok(total_saved)
+    }
+
+
+    fn generate_virtual_snapshot_for_date(
+        &self,
+        virtual_account: &Account,
+        target_date: NaiveDate,
+        allocations: &[crate::accounts::AccountAllocation],
+        keyframes_by_account: &HashMap<String, BTreeMap<NaiveDate, AccountStateSnapshot>>,
+        virtual_currency: &str,
+        base_currency: &str,
+    ) -> Result<AccountStateSnapshot> {
+        use rust_decimal::Decimal;
+
+        let mut positions: HashMap<String, Position> = HashMap::new();
+        let mut cost_basis_base = Decimal::ZERO;
+
+        for a in allocations {
+            // Parse allocation_value stored as String in AccountAllocation
+            let alloc_val = a
+                .allocation_value
+                .parse::<Decimal>()
+                .unwrap_or(Decimal::ZERO);
+
+            let source_map = match keyframes_by_account.get(&a.source_account_id) {
+                Some(m) => m,
+                None => continue,
+            };
+
+            let source_snapshot = match source_map.range(..=target_date).last() {
+                Some((_, snap)) => snap,
+                None => continue,
+            };
+
+            let source_pos = match source_snapshot.positions.get(&a.asset_id) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            // Determine allocated quantity
+            let allocated_qty: Decimal = match a.allocation_type.as_str() {
+                "percent" => {
+                    // alloc_val is "10" meaning 10%
+                    if alloc_val.is_zero() {
+                        Decimal::ZERO
+                    } else {
+                        source_pos.quantity * (alloc_val / Decimal::new(100, 0))
+                    }
+                }
+                "units" => {
+                    if alloc_val <= source_pos.quantity {
+                        alloc_val
+                    } else {
+                        source_pos.quantity
+                    }
+                }
+                "value" => {
+                    // No price in holdings snapshot, so cannot compute quantity here.
+                    // Skip for now (or error if you prefer strictness).
+                    warn!(
+                        "Skipping value-based allocation (id={}) for virtual={} asset={} on {} (no pricing in holdings snapshots)",
+                        a.id, a.virtual_account_id, a.asset_id, target_date
+                    );
+                    Decimal::ZERO
+                }
+                _ => Decimal::ZERO,
+            };
+
+            if allocated_qty.is_zero() {
+                continue;
+            }
+
+            // Allocate cost basis proportionally
+            let allocated_cost_basis_asset_ccy = if !source_pos.quantity.is_zero() {
+                // proportion of total_cost_basis
+                source_pos.total_cost_basis * (allocated_qty / source_pos.quantity)
+            } else {
+                Decimal::ZERO
+            };
+
+            // Allocate lots
+            let allocated_lots: VecDeque<Lot> = match a.allocation_type.as_str() {
+                "percent" => {
+                    self.scale_lots_percent(&source_pos.lots, allocated_qty / source_pos.quantity)
+                }
+                "units" => self.take_lots_fifo(&source_pos.lots, allocated_qty),
+                _ => VecDeque::new(),
+            };
+
+            // Merge into aggregated position (virtual may have multiple source accounts contributing same asset)
+            let p = positions
+                .entry(a.asset_id.clone())
+                .or_insert_with(|| Position {
+                    id: format!("{}_{}", a.asset_id, virtual_account.id),
+                    account_id: virtual_account.id.clone(),
+                    asset_id: a.asset_id.clone(),
+                    quantity: Decimal::ZERO,
+                    average_cost: Decimal::ZERO,
+                    total_cost_basis: Decimal::ZERO,
+                    currency: source_pos.currency.clone(), // keep asset currency
+                    lots: VecDeque::new(),
+                    inception_date: source_pos.inception_date,
+                    created_at: chrono::Utc::now(),
+                    last_updated: chrono::Utc::now(),
+                });
+
+            p.quantity += allocated_qty;
+            p.total_cost_basis += allocated_cost_basis_asset_ccy;
+            p.lots.extend(allocated_lots);
+
+            if source_pos.inception_date < p.inception_date {
+                p.inception_date = source_pos.inception_date;
+            }
+
+            // Add to snapshot-level cost_basis_base (like TOTAL does)
+            match self
+                .holdings_calculator
+                .fx_service
+                .convert_currency_for_date(
+                    allocated_cost_basis_asset_ccy,
+                    &source_pos.currency,
+                    base_currency,
+                    target_date,
+                ) {
+                Ok(cb) => cost_basis_base += cb,
+                Err(_) => {
+                    // fallback: if already base currency, still add
+                    if source_pos.currency == base_currency {
+                        cost_basis_base += allocated_cost_basis_asset_ccy;
+                    }
+                }
+            }
+        }
+
+        // Finalize avg cost + sort lots
+        for pos in positions.values_mut() {
+            if pos.lots.len() > 1 {
+                let mut v: Vec<_> = pos.lots.drain(..).collect();
+                v.sort_by_key(|l| l.acquisition_date);
+                pos.lots = v.into();
+            }
+            if !pos.quantity.is_zero() {
+                pos.average_cost =
+                    (pos.total_cost_basis / pos.quantity).round_dp(DECIMAL_PRECISION);
+            } else {
+                pos.average_cost = Decimal::ZERO;
+                pos.total_cost_basis = Decimal::ZERO;
+            }
+        }
+
+        Ok(AccountStateSnapshot {
+            id: format!("{}_{}", virtual_account.id, target_date.format("%Y-%m-%d")),
+            account_id: virtual_account.id.clone(),
+            snapshot_date: target_date,
+            currency: virtual_currency.to_string(),
+            cash_balances: HashMap::new(), // MVP: allocations are asset-only
+            positions,
+            cost_basis: cost_basis_base.round_dp(DECIMAL_PRECISION),
+            net_contribution: Decimal::ZERO,
+            net_contribution_base: Decimal::ZERO,
+            calculated_at: chrono::Utc::now().naive_utc(),
+        })
+    }
+
+    fn scale_lots_percent(
+        &self,
+        lots: &VecDeque<Lot>,
+        pct: rust_decimal::Decimal,
+    ) -> VecDeque<Lot> {
+        if pct.is_zero() {
+            return VecDeque::new();
+        }
+
+        let mut out = VecDeque::new();
+        for mut l in lots.iter().cloned() {
+            l.quantity = (l.quantity * pct).round_dp(DECIMAL_PRECISION);
+            // If you store lot cost fields, scale them too (depends on your Lot struct).
+            // Example:
+            // l.cost_basis = (l.cost_basis * pct).round_dp(DECIMAL_PRECISION);
+            out.push_back(l);
+        }
+        out
+    }
+
+    fn take_lots_fifo(&self, lots: &VecDeque<Lot>, qty: rust_decimal::Decimal) -> VecDeque<Lot> {
+
+        let mut remaining = qty;
+        let mut out = VecDeque::new();
+
+        for l in lots.iter() {
+            if remaining.is_zero() {
+                break;
+            }
+            let take = if l.quantity <= remaining {
+                l.quantity
+            } else {
+                remaining
+            };
+
+            if take.is_zero() {
+                continue;
+            }
+
+            let mut nl = l.clone();
+            nl.quantity = take;
+
+            // If lot has cost fields, allocate proportionally:
+            // nl.cost_basis = l.cost_basis * (take / l.quantity);
+
+            out.push_back(nl);
+            remaining -= take;
+        }
+
+        out
     }
 
     // --- Step 5: Preprocess activities ---
@@ -867,14 +1200,24 @@ impl SnapshotService {
     async fn calculate_total_portfolio_snapshots_impl(&self) -> Result<usize> {
         debug!("Starting calculation of TOTAL portfolio snapshots (based on stored individual keyframes).");
 
-        let active_accounts = self.account_repository.list(Some(true), None)?;
+        // ✅ only physical accounts contribute to TOTAL
+        let active_accounts: Vec<Account> = self
+            .account_repository
+            .list(Some(true), None)?
+            .into_iter()
+            .filter(|a| !a.is_virtual)
+            .collect();
+
         if active_accounts.is_empty() {
-            warn!("No active accounts found. Cannot generate TOTAL snapshots.");
+            warn!("No active physical accounts found. Cannot generate TOTAL snapshots.");
             self.snapshot_repository
                 .overwrite_all_snapshots_for_account(PORTFOLIO_TOTAL_ACCOUNT_ID, &[])
                 .await?;
             return Ok(0);
         }
+
+        let active_physical_ids: HashSet<String> =
+            active_accounts.iter().map(|a| a.id.clone()).collect();
 
         let all_individual_keyframes = self
             .snapshot_repository
@@ -897,6 +1240,12 @@ impl SnapshotService {
             if keyframe.account_id == PORTFOLIO_TOTAL_ACCOUNT_ID {
                 continue;
             }
+
+            // ✅ ignore snapshots from inactive OR virtual accounts
+            if !active_physical_ids.contains(&keyframe.account_id) {
+                continue;
+            }
+
             all_snapshot_dates.insert(keyframe.snapshot_date);
             keyframes_by_account
                 .entry(keyframe.account_id.clone())
@@ -932,15 +1281,11 @@ impl SnapshotService {
                     &individual_snapshots_on_or_before_date,
                     &base_portfolio_currency,
                 ) {
-                    Ok(total_snapshot) => {
-                        total_portfolio_snapshots_to_save.push(total_snapshot);
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to generate TOTAL portfolio snapshot for target_date {}: {}",
-                            target_date, e
-                        );
-                    }
+                    Ok(total_snapshot) => total_portfolio_snapshots_to_save.push(total_snapshot),
+                    Err(e) => error!(
+                        "Failed to generate TOTAL portfolio snapshot for target_date {}: {}",
+                        target_date, e
+                    ),
                 }
             }
         }

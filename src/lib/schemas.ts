@@ -31,6 +31,7 @@ export const newAccountSchema = z.object({
   group: z.string().optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  isVirtual: z.boolean().optional(),
   accountType: accountTypeSchema,
   currency: z.string({ required_error: "Please select a currency." }),
 });

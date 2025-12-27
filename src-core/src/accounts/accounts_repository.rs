@@ -9,7 +9,7 @@ use crate::errors::Result;
 use crate::schema::accounts;
 use crate::schema::accounts::dsl::*;
 
-use super::accounts_model::{Account, AccountDB, AccountUpdate, NewAccount};
+use super::accounts_model::{Account, AccountDB, AccountUpdate, AccountUpdateDB, NewAccount};
 use super::accounts_traits::AccountRepositoryTrait;
 
 /// Repository for managing account data in the database
@@ -50,29 +50,30 @@ impl AccountRepositoryTrait for AccountRepository {
     }
 
     async fn update(&self, account_update: AccountUpdate) -> Result<Account> {
-        account_update.validate()?;
+    account_update.validate()?;
 
-        self.writer
-            .exec(move |conn| {
-                let mut account_db: AccountDB = account_update.into();
+    self.writer
+        .exec(move |conn| {
+            // AccountUpdate requires an id (validated), so unwrap is safe here
+            let account_id = account_update.id.clone().unwrap();
 
-                let existing = accounts
-                    .select(AccountDB::as_select())
-                    .find(&account_db.id)
-                    .first::<AccountDB>(conn)?;
+            let changes: AccountUpdateDB = account_update.into();
 
-                account_db.currency = existing.currency;
-                account_db.created_at = existing.created_at;
-                account_db.updated_at = chrono::Utc::now().naive_utc();
+            diesel::update(accounts.find(&account_id))
+                .set(&changes)
+                .execute(conn)?;
 
-                diesel::update(accounts.find(&account_db.id))
-                    .set(&account_db)
-                    .execute(conn)?;
+            // Re-read so we return the full record including currency, created_at, is_virtual, etc.
+            let updated = accounts
+                .select(AccountDB::as_select())
+                .find(&account_id)
+                .first::<AccountDB>(conn)?;
 
-                Ok(account_db.into())
-            })
-            .await
+            Ok(updated.into())
+        })
+        .await
     }
+
 
     /// Retrieves an account by its ID
     fn get_by_id(&self, account_id: &str) -> Result<Account> {

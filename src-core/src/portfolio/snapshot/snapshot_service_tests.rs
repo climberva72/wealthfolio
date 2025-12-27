@@ -755,6 +755,7 @@ mod tests {
             account_type: "REGULAR".to_string(),
             group: None,
             is_default: false,
+            is_virtual: false,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
             platform_id: None,
@@ -801,6 +802,7 @@ mod tests {
 
         // Setup mock snapshot repository with test data
         let mock_snapshot_repo = MockSnapshotRepository::new();
+        let mock_account_allocation_repo = MockSnapshotRepository::new();
 
         // Create test snapshots for individual accounts on different dates
         let mut snap1_cad = create_blank_snapshot(&acc1_cad.id, &acc1_cad.currency, date1_str);
@@ -853,8 +855,10 @@ mod tests {
 
         // Add the individual account snapshots to our mock repository
         mock_snapshot_repo.add_snapshots(vec![snap1_cad.clone(), snap2_usd.clone()]);
+        mock_account_allocation_repo.add_account_allocation(vec![snap1_cad.clone(), snap2_usd.clone()]);
 
         let mock_snapshot_repo_arc = Arc::new(mock_snapshot_repo);
+        let mock_account_allocation_repo_arc = Arc::new(mock_account_allocation_repo);
         let base_currency_arc = Arc::new(RwLock::new(base_portfolio_currency.to_string()));
 
         // Create the SnapshotService with our mock repositories
@@ -864,6 +868,7 @@ mod tests {
             mock_account_repo_arc.clone(),
             mock_activity_repo_arc,
             mock_snapshot_repo_arc.clone(),
+            mock_account_allocation_repo_arc.clone(),
             mock_asset_repo,
             mock_fx_service_arc.clone(),
         );

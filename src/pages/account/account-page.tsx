@@ -59,6 +59,8 @@ import { AccountContributionLimit } from "./account-contribution-limit";
 import AccountHoldings from "./account-holdings";
 import AccountMetrics from "./account-metrics";
 
+import VirtualAccountHoldings from "./virtual-account-holdings";
+
 interface HistoryChartData {
   date: string;
   totalValue: number;
@@ -96,16 +98,28 @@ const AccountPage = () => {
   const account = useMemo(() => accounts?.find((acc) => acc.id === id), [accounts, id]);
 
   // Query holdings to check if account has any assets
+  //const { data: holdings, isLoading: isHoldingsLoading } = useQuery<Holding[], Error>({
+  //  queryKey: [QueryKeys.HOLDINGS, id],
+  //  queryFn: () => getHoldings(id),
+  //});
+
   const { data: holdings, isLoading: isHoldingsLoading } = useQuery<Holding[], Error>({
     queryKey: [QueryKeys.HOLDINGS, id],
     queryFn: () => getHoldings(id),
+    enabled: !!id && !!account && !account.isVirtual, // ✅ only physical accounts
   });
 
   // Check if account has any holdings (including cash)
+  //const hasHoldings = useMemo(() => {
+  //  if (!holdings) return false;
+  //  return holdings.length > 0;
+  //}, [holdings]);
+
   const hasHoldings = useMemo(() => {
-    if (!holdings) return false;
-    return holdings.length > 0;
-  }, [holdings]);
+    if (!account) return false;
+    if (account.isVirtual) return true; // virtual page decides based on allocations/derived holdings
+    return !!holdings && holdings.length > 0;
+  }, [account, holdings]);
 
   // Group accounts by type for the selector
   const accountsByType = useMemo(() => {
@@ -420,11 +434,16 @@ const AccountPage = () => {
                   className="grow"
                   isLoading={isDetailsLoading || isPerformanceHistoryLoading}
                 />
-                <AccountContributionLimit accountId={id} />
+                {!account?.isVirtual && <AccountContributionLimit accountId={id} />}
               </div>
             </div>
 
-            <AccountHoldings accountId={id} />
+            {account?.isVirtual ? (
+              <VirtualAccountHoldings virtualAccountId={id} />
+            ) : (
+              <AccountHoldings accountId={id} />
+            )}
+
           </>
         ) : (
           <AccountHoldings accountId={id} showEmptyState={true} />

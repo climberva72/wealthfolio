@@ -13,6 +13,7 @@ export {
 } from "./constants";
 
 export type { ImportRequiredField } from "./constants";
+export type AllocationType = "percent" | "units" | "value";
 
 export interface Account {
   id: string;
@@ -23,9 +24,32 @@ export interface Account {
   currency: string;
   isDefault: boolean;
   isActive: boolean;
+  isVirtual: boolean;
   createdAt: Date;
   updatedAt: Date;
   platformId?: string; // Optional
+}
+
+export interface AccountAllocation {
+  id: string;
+  virtualAccountId: string;
+  sourceAccountId: string;
+  assetId: string;
+  allocationType: AllocationType;
+  allocationValue: number;
+  effectiveFrom: string; // ISO string
+  effectiveTo?: string | null;
+  createdAt: string; // ISO string
+}
+
+export interface NewAccountAllocation {
+  virtualAccountId: string;
+  sourceAccountId: string;
+  assetId: string;
+  allocationType: AllocationType;
+  allocationValue: number;
+  effectiveFrom: string; // ISO string
+  effectiveTo?: string | null;
 }
 
 export interface Activity {

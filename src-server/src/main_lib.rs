@@ -5,7 +5,7 @@ use crate::{auth::AuthManager, config::Config, events::EventBus, secrets::build_
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 use wealthfolio_core::{
-    accounts::{AccountRepository, AccountService},
+    accounts::{AccountRepository, AccountService, AccountAllocationRepository},
     activities::{
         ActivityRepository, ActivityService as CoreActivityService, ActivityServiceTrait,
     },
@@ -136,11 +136,13 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     )?);
     let activity_repository = Arc::new(ActivityRepository::new(pool.clone(), writer.clone()));
     let snapshot_repository = Arc::new(SnapshotRepository::new(pool.clone(), writer.clone()));
+    let account_allocation_repository = Arc::new(AccountAllocationRepository::new(pool.clone(), writer.clone()));
     let snapshot_service = Arc::new(SnapshotService::new(
         base_currency.clone(),
         account_repo.clone(),
         activity_repository.clone(),
         snapshot_repository.clone(),
+        account_allocation_repository.clone(),
         asset_repository.clone(),
         fx_service.clone(),
     ));

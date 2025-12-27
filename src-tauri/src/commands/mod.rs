@@ -1,4 +1,5 @@
 pub mod account;
+pub mod account_allocations;
 pub mod activity;
 pub mod addon;
 pub mod asset;

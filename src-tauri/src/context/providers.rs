@@ -2,7 +2,7 @@ use super::registry::ServiceContext;
 use crate::secret_store::shared_secret_store;
 use std::sync::{Arc, RwLock};
 use wealthfolio_core::{
-    accounts::{AccountRepository, AccountService},
+    accounts::{AccountRepository, AccountService, AccountAllocationRepository, AccountAllocationService},
     activities::{ActivityRepository, ActivityService},
     db::{self, write_actor},
     fx::{FxRepository, FxService, FxServiceTrait},
@@ -35,6 +35,7 @@ pub async fn initialize_context(
     // Instantiate Repositories
     let settings_repository = Arc::new(SettingsRepository::new(pool.clone(), writer.clone()));
     let account_repository = Arc::new(AccountRepository::new(pool.clone(), writer.clone()));
+    let account_allocation_repository = Arc::new(AccountAllocationRepository::new(pool.clone(), writer.clone()));
     let activity_repository = Arc::new(ActivityRepository::new(pool.clone(), writer.clone()));
     let asset_repository = Arc::new(AssetRepository::new(pool.clone(), writer.clone()));
     let goal_repo = Arc::new(GoalRepository::new(pool.clone(), writer.clone()));
@@ -82,6 +83,12 @@ pub async fn initialize_context(
         transaction_executor.clone(),
         base_currency.clone(),
     ));
+    let account_allocation_service = Arc::new(AccountAllocationService::new(
+        account_allocation_repository.clone(),
+        fx_service.clone(),
+        transaction_executor.clone(),
+        base_currency.clone(),
+    ));
     let activity_service = Arc::new(ActivityService::new(
         activity_repository.clone(),
         account_service.clone(),
@@ -106,6 +113,7 @@ pub async fn initialize_context(
         account_repository.clone(),
         activity_repository.clone(),
         snapshot_repository.clone(),
+        account_allocation_repository.clone(),
         asset_repository.clone(),
         fx_service.clone(),
     ));
@@ -139,6 +147,7 @@ pub async fn initialize_context(
         instance_id,
         settings_service,
         account_service,
+        account_allocation_service,
         activity_service,
         asset_service,
         goal_service,

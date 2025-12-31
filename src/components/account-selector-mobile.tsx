@@ -52,6 +52,7 @@ function createPortfolioAccount(baseCurrency: string): UIAccount {
     group: undefined,
     isActive: true,
     isDefault: false,
+    isVirtual: false,
     balance: 0,
     createdAt: new Date(),
     updatedAt: new Date(),

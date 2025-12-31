@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use super::account_allocations_model::{AccountAllocation, NewAccountAllocation};
+use super::account_allocations_model::{AccountAllocation, NewAccountAllocation, UpdateAccountAllocation};
 use super::account_allocations_traits::{AccountAllocationRepositoryTrait, AccountAllocationServiceTrait};
 use crate::db::DbTransactionExecutor;
 use crate::errors::Result;
@@ -52,18 +52,22 @@ impl<E: DbTransactionExecutor + Send + Sync + Clone> AccountAllocationServiceTra
         (*self.repository).list_for_virtual_account(virtual_account_id)
     }
 
-    async fn delete_allocation(&self, allocation_id: &str) -> Result<()> {
+    async fn delete_allocation(&self, allocation_id: &str) -> Result<AccountAllocation> {
+        let alloc = (*self.repository).get_by_id(allocation_id)?; // or however repo access works
         (*self.repository).delete_allocation(allocation_id).await?;
-        Ok(())
+        Ok(alloc)
     }
 
-    async fn close_allocation(
+    async fn update_allocation(
         &self,
         allocation_id: &str,
-        effective_to: chrono::NaiveDateTime,
-    ) -> Result<()> {
-        (*self.repository).close_allocation(allocation_id, effective_to).await?;
-        Ok(())
+        changes: UpdateAccountAllocation,
+    ) -> Result<AccountAllocation> {
+        // validate patch (optional but good)
+        changes.validate()?;
+
+        // simplest: call repo sync update (it opens its own connection)
+        (*self.repository).update_allocation(allocation_id, changes)
     }
 
 }

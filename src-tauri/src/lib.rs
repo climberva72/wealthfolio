@@ -178,6 +178,7 @@ pub fn run() {
             // Allocation commands
             commands::account_allocations::create_account_allocation,
             commands::account_allocations::list_account_allocations,
+            commands::account_allocations::update_account_allocation,
             commands::account_allocations::delete_account_allocation,
             // Activity commands
             commands::activity::search_activities,

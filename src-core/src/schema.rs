@@ -6,11 +6,8 @@ diesel::table! {
         virtual_account_id -> Text,
         source_account_id -> Text,
         asset_id -> Text,
-        allocation_type -> Text,
         allocation_value -> Text,
         effective_from -> Text,
-        effective_to -> Nullable<Text>,
-        created_at -> Text,
     }
 }
 

@@ -11,11 +11,8 @@ pub struct AccountAllocation {
     pub virtual_account_id: String,
     pub source_account_id: String,
     pub asset_id: String,
-    pub allocation_type: String, // "percent" | "units" | "value"
     pub allocation_value: String,
     pub effective_from: String,
-    pub effective_to: Option<String>,
-    pub created_at: String,
 }
 
 impl AccountAllocation {
@@ -34,10 +31,8 @@ pub struct NewAccountAllocation {
     pub virtual_account_id: String,
     pub source_account_id: String,
     pub asset_id: String,
-    pub allocation_type: String,
     pub allocation_value: Decimal,
     pub effective_from: String,
-    pub effective_to: Option<String>,
 }
 
 impl NewAccountAllocation {
@@ -62,15 +57,89 @@ impl NewAccountAllocation {
         //        "Allocation value must be >= 0".to_string(),
         //    )));
         //}
-        match self.allocation_type.as_str() {
-            "percent" | "units" | "value" => {}
-            _ => {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAccountAllocation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_value: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_from: Option<String>,
+}
+
+impl UpdateAccountAllocation {
+    pub fn validate(&self) -> crate::Result<()> {
+        if let Some(v) = &self.virtual_account_id {
+            if v.trim().is_empty() {
                 return Err(Error::Validation(ValidationError::InvalidInput(
-                    "Allocation type must be one of: percent, units, value".to_string(),
-                )))
+                    "Virtual account ID required".to_string(),
+                )));
+            }
+        }
+        if let Some(v) = &self.source_account_id {
+            if v.trim().is_empty() {
+                return Err(Error::Validation(ValidationError::InvalidInput(
+                    "Source account ID required".to_string(),
+                )));
+            }
+        }
+        if let Some(v) = &self.asset_id {
+            if v.trim().is_empty() {
+                return Err(Error::Validation(ValidationError::InvalidInput(
+                    "Asset ID required".to_string(),
+                )));
+            }
+        }
+        if let Some(t) = &self.allocation_type {
+            match t.as_str() {
+                "percent" | "units" | "value" => {}
+                _ => {
+                    return Err(Error::Validation(ValidationError::InvalidInput(
+                        "Allocation type must be one of: percent, units, value".to_string(),
+                    )))
+                }
             }
         }
         Ok(())
+    }
+}
+
+/// Diesel changeset for partial updates (DB shape)
+#[derive(Debug, Clone, Default, AsChangeset)]
+#[diesel(table_name = crate::schema::account_allocations)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub struct AccountAllocationChangeset {
+    pub virtual_account_id: Option<String>,
+    pub source_account_id: Option<String>,
+    pub asset_id: Option<String>,
+    pub allocation_value: Option<String>,
+    pub effective_from: Option<String>,
+    // NOTE: we intentionally do NOT include effective_to here due to tri-state handling
+}
+
+impl UpdateAccountAllocation {
+    /// Convert into a Diesel changeset + a flag for whether to null-out effective_to
+    pub fn into_changeset(self) -> (AccountAllocationChangeset) {
+        let cs = AccountAllocationChangeset {
+            virtual_account_id: self.virtual_account_id,
+            source_account_id: self.source_account_id,
+            asset_id: self.asset_id,
+            allocation_value: self.allocation_value.map(|d| d.to_string()),
+            effective_from: self.effective_from,
+        };
+
+        cs
     }
 }
 
@@ -94,11 +163,8 @@ pub struct AccountAllocationDB {
     pub virtual_account_id: String,
     pub source_account_id: String,
     pub asset_id: String,
-    pub allocation_type: String,
     pub allocation_value: String,
     pub effective_from: String,
-    pub effective_to: Option<String>,
-    pub created_at: String,
 }
 
 impl From<AccountAllocationDB> for AccountAllocation {
@@ -108,11 +174,8 @@ impl From<AccountAllocationDB> for AccountAllocation {
             virtual_account_id: db.virtual_account_id,
             source_account_id: db.source_account_id,
             asset_id: db.asset_id,
-            allocation_type: db.allocation_type,
             allocation_value: db.allocation_value,
-            effective_from: db.effective_from,
-            effective_to: db.effective_to,
-            created_at: db.created_at,
+            effective_from: db.effective_from
         }
     }
 }
@@ -125,11 +188,8 @@ impl From<NewAccountAllocation> for AccountAllocationDB {
             virtual_account_id: domain.virtual_account_id,
             source_account_id: domain.source_account_id,
             asset_id: domain.asset_id,
-            allocation_type: domain.allocation_type,
             allocation_value: domain.allocation_value.to_string(),
             effective_from: domain.effective_from,
-            effective_to: domain.effective_to,
-            created_at: now.to_rfc3339(),
         }
     }
 }

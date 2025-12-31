@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use diesel::sqlite::SqliteConnection;
 
-use super::account_allocations_model::{AccountAllocation, NewAccountAllocation};
+use super::account_allocations_model::{AccountAllocation, NewAccountAllocation, UpdateAccountAllocation};
 use crate::Result;
 
 #[async_trait]
@@ -20,13 +20,15 @@ pub trait AccountAllocationRepositoryTrait: Send + Sync {
         on_date: chrono::NaiveDate,
     ) -> Result<Vec<AccountAllocation>>;
 
-    async fn close_allocation(
+    fn update_allocation(
         &self,
         allocation_id: &str,
-        effective_to: chrono::NaiveDateTime,
-    ) -> Result<usize>;
+        changes: UpdateAccountAllocation,
+    ) -> Result<AccountAllocation>;
 
     async fn delete_allocation(&self, allocation_id: &str) -> Result<usize>;
+
+    fn get_by_id(&self, allocation_id: &str) -> Result<AccountAllocation>;
 
 }
 
@@ -35,10 +37,10 @@ pub trait AccountAllocationServiceTrait: Send + Sync {
     async fn create_allocation(&self, new_alloc: NewAccountAllocation)
         -> Result<AccountAllocation>;
     fn list_for_virtual_account(&self, virtual_account_id: &str) -> Result<Vec<AccountAllocation>>;
-    async fn delete_allocation(&self, allocation_id: &str) -> Result<()>;
-    async fn close_allocation(
+    async fn delete_allocation(&self, allocation_id: &str) -> Result<AccountAllocation>;
+    async fn update_allocation(
         &self,
         allocation_id: &str,
-        effective_to: chrono::NaiveDateTime,
-    ) -> Result<()>;
+        changes: UpdateAccountAllocation,
+    ) -> Result<AccountAllocation>;
 }

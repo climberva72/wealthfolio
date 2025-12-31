@@ -36,6 +36,8 @@ pub trait SnapshotServiceTrait: Send + Sync {
         account_ids: Option<&[String]>,
     ) -> Result<usize>;
 
+    async fn recalculate_virtual_account(&self, virtual_account_id: &str) -> Result<usize>;
+
     /// Retrieves calculated **holdings** keyframe snapshots for a specific account or the total portfolio within a date range.
     /// Does NOT reconstruct daily snapshots; returns only the saved keyframes.
     fn get_holdings_keyframes(
@@ -111,6 +113,25 @@ impl SnapshotService {
             allocation_repository,
             holdings_calculator,
         }
+    }
+
+    pub async fn recalculate_virtual_account(
+        &self,
+        virtual_account_id: &str,
+    ) -> Result<usize> {
+        let acc = self
+            .account_repository
+            .get_by_id(virtual_account_id)
+            .map_err(|e| Error::Repository(format!(
+                "Virtual account not found: {}", e
+            )))?;
+
+        if !acc.is_virtual {
+            // Safety: never recalc physical accounts here
+            return Ok(0);
+        }
+
+        self.calculate_virtual_account_snapshots(&[acc]).await
     }
 
     // Create a virtual account object for TOTAL
@@ -244,6 +265,10 @@ impl SnapshotService {
             self.calculate_virtual_account_snapshots(&virtual_accounts)
                 .await?;
         }
+        // after saving individual account keyframes (and optionally virtual accounts)
+        if account_ids_param.is_none() {
+            self.calculate_total_portfolio_snapshots_impl().await?;
+        }
         Ok(keyframes_to_save.len())
     }
 
@@ -323,12 +348,12 @@ impl SnapshotService {
         &self,
         virtual_accounts: &[Account],
     ) -> Result<usize> {
+        use std::collections::BTreeSet;
         debug!(
             "Starting calculation of VIRTUAL account snapshots for {} accounts",
             virtual_accounts.len()
         );
 
-        // Build keyframe map (still useful for fast lookups inside generate_virtual_snapshot_for_date)
         let all_keyframes = self
             .snapshot_repository
             .get_all_active_account_snapshots(None, None)?;
@@ -336,9 +361,7 @@ impl SnapshotService {
         let mut keyframes_by_account: HashMap<String, BTreeMap<NaiveDate, AccountStateSnapshot>> =
             HashMap::new();
 
-        // Track the latest snapshot date we have (for end date)
         let mut max_snapshot_date: Option<NaiveDate> = None;
-
         for kf in all_keyframes {
             max_snapshot_date = Some(match max_snapshot_date {
                 Some(d) => d.max(kf.snapshot_date),
@@ -365,12 +388,9 @@ impl SnapshotService {
         for v in virtual_accounts {
             let v_currency = v.currency.clone();
 
-            // ✅ derive the timeline from allocations, not from keyframe dates
-            let all_allocs = self
-                .allocation_repository
-                .list_for_virtual_account(&v.id)?; // you already have this
+            // All allocations ever for this virtual account
+            let all_allocs = self.allocation_repository.list_for_virtual_account(&v.id)?;
 
-            // If no allocations at all, wipe snapshots and continue
             if all_allocs.is_empty() {
                 self.snapshot_repository
                     .overwrite_all_snapshots_for_account(&v.id, &[])
@@ -378,7 +398,7 @@ impl SnapshotService {
                 continue;
             }
 
-            // parse earliest effective_from
+            // Earliest effective_from is the start of the virtual timeline
             let start_date = all_allocs
                 .iter()
                 .filter_map(|a| chrono::DateTime::parse_from_rfc3339(&a.effective_from).ok())
@@ -386,12 +406,85 @@ impl SnapshotService {
                 .min()
                 .unwrap_or(end_date);
 
+            if start_date > end_date {
+                // nothing to do
+                self.snapshot_repository
+                    .overwrite_all_snapshots_for_account(&v.id, &[])
+                    .await?;
+                continue;
+            }
+
+            // --- 1) Candidate keyframe dates (where virtual holdings could change) ---
+            let mut candidate_dates: BTreeSet<NaiveDate> = BTreeSet::new();
+
+            // allocation change days
+            for a in &all_allocs {
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&a.effective_from) {
+                    let d = dt.date_naive();
+                    if d >= start_date && d <= end_date {
+                        candidate_dates.insert(d);
+                    }
+                }
+            }
+
+            // source keyframe days (activity days / first-day keyframes) for referenced source accounts
+            let source_accounts: HashSet<String> = all_allocs
+                .iter()
+                .map(|a| a.source_account_id.clone())
+                .collect();
+
+            for source_id in &source_accounts {
+                if let Some(map) = keyframes_by_account.get(source_id) {
+                    // Add keyframe dates in [start_date, end_date]
+                    for (&d, _) in map.range(start_date..=end_date) {
+                        candidate_dates.insert(d);
+                    }
+                }
+            }
+
+            // Ensure start_date is included (in case allocations start before any keyframe)
+            candidate_dates.insert(start_date);
+
+            // --- 2) Helper: compute "active allocations on date" ignoring effective_to ---
+            // Rule: for each (source_account_id, asset_id), pick the allocation with max effective_from <= day
+            let active_allocs_on = |day: NaiveDate| -> Vec<crate::accounts::AccountAllocation> {
+                let mut best: HashMap<
+                    (String, String),
+                    (NaiveDate, crate::accounts::AccountAllocation),
+                > = HashMap::new();
+
+                for a in &all_allocs {
+                    let eff = match chrono::DateTime::parse_from_rfc3339(&a.effective_from) {
+                        Ok(dt) => dt.date_naive(),
+                        Err(_) => continue,
+                    };
+
+                    if eff > day {
+                        continue;
+                    }
+
+                    let key = (a.source_account_id.clone(), a.asset_id.clone());
+
+                    match best.get(&key) {
+                        None => {
+                            best.insert(key, (eff, a.clone()));
+                        }
+                        Some((best_eff, _)) => {
+                            if eff >= *best_eff {
+                                best.insert(key, (eff, a.clone()));
+                            }
+                        }
+                    }
+                }
+
+                best.into_values().map(|(_, a)| a).collect()
+            };
+
+            // --- 3) Generate and store only keyframes ---
             let mut snapshots_to_save: Vec<AccountStateSnapshot> = Vec::new();
 
-            for day in get_days_between(start_date, end_date) {
-                let allocs = self
-                    .allocation_repository
-                    .list_active_for_virtual_account_on(&v.id, day)?;
+            for day in candidate_dates {
+                let allocs = active_allocs_on(day);
 
                 if allocs.is_empty() {
                     continue;
@@ -418,7 +511,6 @@ impl SnapshotService {
 
         Ok(total_saved)
     }
-
 
     fn generate_virtual_snapshot_for_date(
         &self,
@@ -456,33 +548,13 @@ impl SnapshotService {
                 None => continue,
             };
 
-            // Determine allocated quantity
-            let allocated_qty: Decimal = match a.allocation_type.as_str() {
-                "percent" => {
-                    // alloc_val is "10" meaning 10%
-                    if alloc_val.is_zero() {
-                        Decimal::ZERO
-                    } else {
-                        source_pos.quantity * (alloc_val / Decimal::new(100, 0))
-                    }
-                }
-                "units" => {
-                    if alloc_val <= source_pos.quantity {
-                        alloc_val
-                    } else {
-                        source_pos.quantity
-                    }
-                }
-                "value" => {
-                    // No price in holdings snapshot, so cannot compute quantity here.
-                    // Skip for now (or error if you prefer strictness).
-                    warn!(
-                        "Skipping value-based allocation (id={}) for virtual={} asset={} on {} (no pricing in holdings snapshots)",
-                        a.id, a.virtual_account_id, a.asset_id, target_date
-                    );
+            let allocated_qty: Decimal = {
+                // alloc_val is "10" meaning 10%
+                if alloc_val.is_zero() {
                     Decimal::ZERO
+                } else {
+                    source_pos.quantity * (alloc_val / Decimal::new(100, 0))
                 }
-                _ => Decimal::ZERO,
             };
 
             if allocated_qty.is_zero() {
@@ -498,13 +570,8 @@ impl SnapshotService {
             };
 
             // Allocate lots
-            let allocated_lots: VecDeque<Lot> = match a.allocation_type.as_str() {
-                "percent" => {
-                    self.scale_lots_percent(&source_pos.lots, allocated_qty / source_pos.quantity)
-                }
-                "units" => self.take_lots_fifo(&source_pos.lots, allocated_qty),
-                _ => VecDeque::new(),
-            };
+            let allocated_lots: VecDeque<Lot> =
+                self.scale_lots_percent(&source_pos.lots, allocated_qty / source_pos.quantity);
 
             // Merge into aggregated position (virtual may have multiple source accounts contributing same asset)
             let p = positions
@@ -598,38 +665,6 @@ impl SnapshotService {
             // l.cost_basis = (l.cost_basis * pct).round_dp(DECIMAL_PRECISION);
             out.push_back(l);
         }
-        out
-    }
-
-    fn take_lots_fifo(&self, lots: &VecDeque<Lot>, qty: rust_decimal::Decimal) -> VecDeque<Lot> {
-
-        let mut remaining = qty;
-        let mut out = VecDeque::new();
-
-        for l in lots.iter() {
-            if remaining.is_zero() {
-                break;
-            }
-            let take = if l.quantity <= remaining {
-                l.quantity
-            } else {
-                remaining
-            };
-
-            if take.is_zero() {
-                continue;
-            }
-
-            let mut nl = l.clone();
-            nl.quantity = take;
-
-            // If lot has cost fields, allocate proportionally:
-            // nl.cost_basis = l.cost_basis * (take / l.quantity);
-
-            out.push_back(nl);
-            remaining -= take;
-        }
-
         out
     }
 
@@ -1241,7 +1276,7 @@ impl SnapshotService {
                 continue;
             }
 
-            // ✅ ignore snapshots from inactive OR virtual accounts
+            // ignore snapshots from inactive OR virtual accounts
             if !active_physical_ids.contains(&keyframe.account_id) {
                 continue;
             }
@@ -1326,6 +1361,16 @@ impl SnapshotServiceTrait for SnapshotService {
     ) -> Result<usize> {
         self.calculate_holdings_snapshots_internal(account_ids, true)
             .await
+    }
+
+    async fn recalculate_virtual_account(&self, virtual_account_id: &str) -> Result<usize> {
+        let acc = self.account_repository.get_by_id(virtual_account_id)?;
+
+        if !acc.is_virtual {
+            return Ok(0);
+        }
+
+        self.calculate_virtual_account_snapshots(&[acc]).await
     }
 
     fn get_holdings_keyframes(

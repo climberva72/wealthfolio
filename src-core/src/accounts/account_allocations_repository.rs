@@ -10,7 +10,7 @@ use crate::schema::account_allocations;
 use crate::schema::account_allocations::dsl::*;
 
 use super::account_allocations_model::{
-    AccountAllocation, AccountAllocationDB, NewAccountAllocation,
+    AccountAllocation, AccountAllocationDB, NewAccountAllocation, UpdateAccountAllocation
 };
 use super::account_allocations_traits::AccountAllocationRepositoryTrait;
 
@@ -40,17 +40,6 @@ impl AccountAllocationRepositoryTrait for AccountAllocationRepository {
 
         use crate::schema::account_allocations::dsl as aa;
 
-        // Close any currently-active allocation for the same virtual+source+asset
-        diesel::update(
-            aa::account_allocations
-                .filter(aa::virtual_account_id.eq(&new_alloc.virtual_account_id))
-                .filter(aa::asset_id.eq(&new_alloc.asset_id))
-                .filter(aa::effective_to.is_null()),
-        )
-        .set(aa::effective_to.eq(&new_alloc.effective_from))
-        .execute(conn)?;
-
-
         // Insert new allocation
         let mut alloc_db: AccountAllocationDB = new_alloc.into();
         alloc_db.id = uuid::Uuid::new_v4().to_string();
@@ -62,7 +51,6 @@ impl AccountAllocationRepositoryTrait for AccountAllocationRepository {
         Ok(alloc_db.into())
     }
 
-
     fn list_for_virtual_account(
         &self,
         virtual_account_id_param: &str,
@@ -72,10 +60,21 @@ impl AccountAllocationRepositoryTrait for AccountAllocationRepository {
         let rows = account_allocations::table
             .filter(virtual_account_id.eq(virtual_account_id_param))
             .select(AccountAllocationDB::as_select())
-            .order((effective_from.asc(), created_at.asc()))
+            .order(effective_from.asc())
             .load::<AccountAllocationDB>(&mut conn)?;
 
         Ok(rows.into_iter().map(AccountAllocation::from).collect())
+    }
+
+    fn get_by_id(&self, allocation_id_param: &str) -> Result<AccountAllocation> {
+        let mut conn = get_connection(&self.pool)?;
+
+        let row = account_allocations::table
+            .filter(account_allocations::id.eq(allocation_id_param))
+            .select(AccountAllocationDB::as_select())
+            .first::<AccountAllocationDB>(&mut conn)?;
+
+        Ok(AccountAllocation::from(row))
     }
 
     fn list_active_for_virtual_account_on(
@@ -87,8 +86,7 @@ impl AccountAllocationRepositoryTrait for AccountAllocationRepository {
 
         use crate::schema::account_allocations::dsl as aa;
 
-        // Build a UTC day window [start, end)
-        let start_dt = on_date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+        // As-of end-of-day (exclusive): effective_from < end_of_day
         let end_dt = on_date
             .succ_opt()
             .unwrap_or(on_date)
@@ -96,41 +94,58 @@ impl AccountAllocationRepositoryTrait for AccountAllocationRepository {
             .unwrap()
             .and_utc();
 
-        let start_str = start_dt.to_rfc3339();
         let end_str = end_dt.to_rfc3339();
 
-        // Active if:
-        // effective_from < end_of_day AND (effective_to is null OR effective_to > start_of_day)
+        // Load all allocations effective before end_of_day, newest first per asset
         let rows = aa::account_allocations
             .filter(aa::virtual_account_id.eq(virtual_account_id_param))
             .filter(aa::effective_from.lt(&end_str))
-            .filter(aa::effective_to.is_null().or(aa::effective_to.gt(&start_str)))
             .select(AccountAllocationDB::as_select())
-            // newest allocation wins if overlaps exist (defensive)
-            .order((aa::asset_id.asc(), aa::effective_from.desc(), aa::created_at.desc()))
+            .order((aa::asset_id.asc(), aa::effective_from.desc()))
             .load::<AccountAllocationDB>(&mut conn)?;
 
-        Ok(rows.into_iter().map(AccountAllocation::from).collect())
+        // Keep only the latest allocation per asset_id (effective until changed)
+        let mut latest_by_asset: std::collections::HashMap<String, AccountAllocationDB> =
+            std::collections::HashMap::new();
+
+        for r in rows {
+            latest_by_asset.entry(r.asset_id.clone()).or_insert(r);
+        }
+
+        // Deterministic output order
+        let mut out: Vec<AccountAllocation> = latest_by_asset
+            .into_values()
+            .map(AccountAllocation::from)
+            .collect();
+
+        out.sort_by(|a, b| a.asset_id.cmp(&b.asset_id));
+        Ok(out)
     }
 
-    async fn close_allocation(
+
+    fn update_allocation(
         &self,
         allocation_id_param: &str,
-        effective_to_param: chrono::NaiveDateTime,
-    ) -> Result<usize> {
-        let alloc_id = allocation_id_param.to_string();
-        let effective_to_str = effective_to_param.and_utc().to_rfc3339();
+        changes: UpdateAccountAllocation,
+    ) -> Result<AccountAllocation> {
+        changes.validate()?;
 
-        // We only set effective_to; we do NOT mutate other fields.
-        self.writer
-            .exec(move |conn| {
-                let affected = diesel::update(account_allocations.find(&alloc_id))
-                    .set(effective_to.eq(effective_to_str))
-                    .execute(conn)?;
+        let (cs) = changes.into_changeset();
 
-                Ok(affected)
-            })
-            .await
+        let mut conn = get_connection(&self.pool)?;
+
+        // apply normal field updates (only Some(_) fields get updated)
+        diesel::update(account_allocations.filter(id.eq(allocation_id_param)))
+            .set(cs)
+            .execute(&mut conn)?;
+
+        // return updated row
+        let updated_db = account_allocations
+            .filter(id.eq(allocation_id_param))
+            .select(AccountAllocationDB::as_select())
+            .first::<AccountAllocationDB>(&mut conn)?;
+
+        Ok(updated_db.into())
     }
 
     async fn delete_allocation(&self, allocation_id_param: &str) -> Result<usize> {

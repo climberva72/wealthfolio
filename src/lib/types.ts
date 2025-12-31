@@ -52,6 +52,23 @@ export interface NewAccountAllocation {
   effectiveTo?: string | null;
 }
 
+// Patch semantics: omit fields you don't want to change
+export type UpdateAccountAllocation = {
+  virtualAccountId?: string;
+  sourceAccountId?: string;
+  assetId?: string;
+  allocationType?: "percent" | "units" | "value";
+  allocationValue?: number;
+
+  effectiveFrom?: string;
+
+  // tri-state:
+  // undefined => don't change
+  // null => set to NULL
+  // string => set to value
+  effectiveTo?: string | null;
+};
+
 export interface Activity {
   id: string;
   type: ActivityType;

@@ -18,7 +18,7 @@ pub use accounts_repository::AccountRepository;
 pub use accounts_service::AccountService;
 pub use accounts_traits::{AccountRepositoryTrait, AccountServiceTrait};
 
-pub use account_allocations_model::{AccountAllocation, AccountAllocationDB, NewAccountAllocation};
+pub use account_allocations_model::{AccountAllocation, AccountAllocationDB, NewAccountAllocation, UpdateAccountAllocation};
 pub use account_allocations_repository::AccountAllocationRepository;
 pub use account_allocations_service::AccountAllocationService;
 pub use account_allocations_traits::{AccountAllocationRepositoryTrait, AccountAllocationServiceTrait};

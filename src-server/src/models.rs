@@ -48,6 +48,7 @@ pub struct NewAccount {
     pub currency: String,
     pub is_default: bool,
     pub is_active: bool,
+    #[serde(default)]
     pub is_virtual: bool,
     pub platform_id: Option<String>,
 }

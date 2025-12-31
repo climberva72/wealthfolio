@@ -7,11 +7,8 @@ CREATE TABLE account_allocations (
     virtual_account_id TEXT NOT NULL,
     source_account_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
-    allocation_type TEXT NOT NULL CHECK (allocation_type IN ('percent','units','value')),
     allocation_value TEXT NOT NULL,
     effective_from TEXT NOT NULL,
-    effective_to   TEXT,
-    created_at TEXT NOT NULL,
 
     FOREIGN KEY (virtual_account_id)
       REFERENCES accounts(id)

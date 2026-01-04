@@ -73,9 +73,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useAccountAllocations } from "@/hooks/use-account-allocations";
-import { AddAllocationDialog } from "../allocation/components/add-allocation-dialog";
-import { AllocationsTable } from "../allocation/components/allocations-table";
-import { EditAllocationDialog } from "../allocation/components/edit-allocation-dialog";
+import { AddAllocationDialog } from "./components/add-allocation-dialog";
+import { AllocationsTable } from "./components/allocations-table";
+import { EditAllocationDialog } from "./components/edit-allocation-dialog";
 
 interface HistoryChartData {
   date: string;

@@ -50,30 +50,29 @@ impl AccountRepositoryTrait for AccountRepository {
     }
 
     async fn update(&self, account_update: AccountUpdate) -> Result<Account> {
-    account_update.validate()?;
+        account_update.validate()?;
 
-    self.writer
-        .exec(move |conn| {
-            // AccountUpdate requires an id (validated), so unwrap is safe here
-            let account_id = account_update.id.clone().unwrap();
+        self.writer
+            .exec(move |conn| {
+                // AccountUpdate requires an id (validated), so unwrap is safe here
+                let account_id = account_update.id.clone().unwrap();
 
-            let changes: AccountUpdateDB = account_update.into();
+                let changes: AccountUpdateDB = account_update.into();
 
-            diesel::update(accounts.find(&account_id))
-                .set(&changes)
-                .execute(conn)?;
+                diesel::update(accounts.find(&account_id))
+                    .set(&changes)
+                    .execute(conn)?;
 
-            // Re-read so we return the full record including currency, created_at, is_virtual, etc.
-            let updated = accounts
-                .select(AccountDB::as_select())
-                .find(&account_id)
-                .first::<AccountDB>(conn)?;
+                // Re-read so we return the full record including currency, created_at, is_virtual, etc.
+                let updated = accounts
+                    .select(AccountDB::as_select())
+                    .find(&account_id)
+                    .first::<AccountDB>(conn)?;
 
-            Ok(updated.into())
-        })
-        .await
+                Ok(updated.into())
+            })
+            .await
     }
-
 
     /// Retrieves an account by its ID
     fn get_by_id(&self, account_id: &str) -> Result<Account> {

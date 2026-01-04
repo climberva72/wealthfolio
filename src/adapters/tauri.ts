@@ -132,6 +132,12 @@ export const listenPortfolioUpdateStartTauri = async <T>(
   return listen<T>("portfolio:update-start", handler);
 };
 
+export const listenResourceChangedTauri = async <T>(
+  handler: EventCallback<T>,
+): Promise<UnlistenFn> => {
+  return listen<T>("resource:changed", handler);
+};
+
 export const listenPortfolioUpdateCompleteTauri = async <T>(
   handler: EventCallback<T>,
 ): Promise<UnlistenFn> => {

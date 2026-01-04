@@ -5,10 +5,11 @@ use crate::{auth::AuthManager, config::Config, events::EventBus, secrets::build_
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 use wealthfolio_core::{
-    accounts::{AccountRepository, AccountService, AccountAllocationRepository},
+    accounts::{AccountRepository, AccountService},
     activities::{
         ActivityRepository, ActivityService as CoreActivityService, ActivityServiceTrait,
     },
+    allocations::{AccountAllocationRepository},
     assets::{AssetRepository, AssetService, AssetServiceTrait},
     db::{self, write_actor},
     fx::{FxRepository, FxService, FxServiceTrait},

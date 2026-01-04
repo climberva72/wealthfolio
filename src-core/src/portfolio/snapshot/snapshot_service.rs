@@ -1,6 +1,7 @@
 use super::holdings_calculator::HoldingsCalculator;
 use super::snapshot_repository::SnapshotRepositoryTrait;
-use crate::accounts::{Account, AccountAllocationRepositoryTrait, AccountRepositoryTrait};
+use crate::accounts::{Account, AccountRepositoryTrait};
+use crate::allocations::{AccountAllocationRepositoryTrait};
 use crate::activities::{Activity, ActivityRepositoryTrait};
 use crate::assets::AssetRepositoryTrait;
 use crate::constants::{DECIMAL_PRECISION, PORTFOLIO_TOTAL_ACCOUNT_ID};
@@ -115,16 +116,11 @@ impl SnapshotService {
         }
     }
 
-    pub async fn recalculate_virtual_account(
-        &self,
-        virtual_account_id: &str,
-    ) -> Result<usize> {
+    pub async fn recalculate_virtual_account(&self, virtual_account_id: &str) -> Result<usize> {
         let acc = self
             .account_repository
             .get_by_id(virtual_account_id)
-            .map_err(|e| Error::Repository(format!(
-                "Virtual account not found: {}", e
-            )))?;
+            .map_err(|e| Error::Repository(format!("Virtual account not found: {}", e)))?;
 
         if !acc.is_virtual {
             // Safety: never recalc physical accounts here
@@ -447,10 +443,10 @@ impl SnapshotService {
 
             // --- 2) Helper: compute "active allocations on date" ignoring effective_to ---
             // Rule: for each (source_account_id, asset_id), pick the allocation with max effective_from <= day
-            let active_allocs_on = |day: NaiveDate| -> Vec<crate::accounts::AccountAllocation> {
+            let active_allocs_on = |day: NaiveDate| -> Vec<crate::allocations::AccountAllocation> {
                 let mut best: HashMap<
                     (String, String),
-                    (NaiveDate, crate::accounts::AccountAllocation),
+                    (NaiveDate, crate::allocations::AccountAllocation),
                 > = HashMap::new();
 
                 for a in &all_allocs {
@@ -516,7 +512,7 @@ impl SnapshotService {
         &self,
         virtual_account: &Account,
         target_date: NaiveDate,
-        allocations: &[crate::accounts::AccountAllocation],
+        allocations: &[crate::allocations::AccountAllocation],
         keyframes_by_account: &HashMap<String, BTreeMap<NaiveDate, AccountStateSnapshot>>,
         virtual_currency: &str,
         base_currency: &str,
@@ -525,6 +521,7 @@ impl SnapshotService {
 
         let mut positions: HashMap<String, Position> = HashMap::new();
         let mut cost_basis_base = Decimal::ZERO;
+        let mut cash_balances: HashMap<String, Decimal> = HashMap::new();
 
         for a in allocations {
             // Parse allocation_value stored as String in AccountAllocation
@@ -532,6 +529,10 @@ impl SnapshotService {
                 .allocation_value
                 .parse::<Decimal>()
                 .unwrap_or(Decimal::ZERO);
+            if alloc_val.is_zero() {
+                continue;
+            }
+            let alloc_pct = alloc_val / Decimal::new(100, 0);
 
             let source_map = match keyframes_by_account.get(&a.source_account_id) {
                 Some(m) => m,
@@ -543,6 +544,27 @@ impl SnapshotService {
                 None => continue,
             };
 
+            // ✅ CASH allocation (synthetic asset id)
+            if a.asset_id == "CASH" {
+                // per your rule: CASH lives in global base currency
+                let src_cash_base = source_snapshot
+                    .cash_balances
+                    .get(base_currency)
+                    .cloned()
+                    .unwrap_or(Decimal::ZERO);
+
+                let allocated_cash = (src_cash_base * alloc_pct).round_dp(DECIMAL_PRECISION);
+                if !allocated_cash.is_zero() {
+                    *cash_balances
+                        .entry(base_currency.to_string())
+                        .or_insert(Decimal::ZERO) += allocated_cash;
+                }
+
+                cost_basis_base += allocated_cash;
+
+                continue; // skip position path
+            }
+
             let source_pos = match source_snapshot.positions.get(&a.asset_id) {
                 Some(p) => p,
                 None => continue,
@@ -553,7 +575,7 @@ impl SnapshotService {
                 if alloc_val.is_zero() {
                     Decimal::ZERO
                 } else {
-                    source_pos.quantity * (alloc_val / Decimal::new(100, 0))
+                    source_pos.quantity * alloc_pct
                 }
             };
 
@@ -634,16 +656,37 @@ impl SnapshotService {
             }
         }
 
+        // For virtual “slice” accounts, treat allocated cost basis as “net contributions”.
+        // This makes allocation changes behave like external flows (so TWR doesn’t spike).
+        let net_contribution_base = cost_basis_base;
+
+        let net_contribution_virtual_ccy = self
+            .holdings_calculator
+            .fx_service
+            .convert_currency_for_date(
+                net_contribution_base,
+                base_currency,
+                virtual_currency,
+                target_date,
+            )
+            .unwrap_or_else(|_| {
+                if virtual_currency == base_currency {
+                    net_contribution_base
+                } else {
+                    Decimal::ZERO
+                }
+            });
+
         Ok(AccountStateSnapshot {
             id: format!("{}_{}", virtual_account.id, target_date.format("%Y-%m-%d")),
             account_id: virtual_account.id.clone(),
             snapshot_date: target_date,
             currency: virtual_currency.to_string(),
-            cash_balances: HashMap::new(), // MVP: allocations are asset-only
+            cash_balances: cash_balances,
             positions,
             cost_basis: cost_basis_base.round_dp(DECIMAL_PRECISION),
-            net_contribution: Decimal::ZERO,
-            net_contribution_base: Decimal::ZERO,
+            net_contribution: net_contribution_virtual_ccy.round_dp(DECIMAL_PRECISION),
+            net_contribution_base: net_contribution_base.round_dp(DECIMAL_PRECISION),
             calculated_at: chrono::Utc::now().naive_utc(),
         })
     }

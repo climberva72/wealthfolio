@@ -1,81 +1,59 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/components/ui/use-toast";
 import {
   createAccountAllocation,
-  listAccountAllocations,
   deleteAccountAllocation,
-  updateAccountAllocation, // ✅ add this
+  listAccountAllocations,
+  updateAccountAllocation,
 } from "@/commands/account-allocations";
+import { toast } from "@/components/ui/use-toast";
 import type { NewAccountAllocation, UpdateAccountAllocation } from "@/lib/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+// ✅ desktop-only: tauri invoke (adjust import for your tauri version)
+import { invoke } from "@tauri-apps/api/core";
 
 export function useAccountAllocations(virtualAccountId: string) {
   const qc = useQueryClient();
-
-  // ✅ define once and reuse everywhere
-  const queryKey = ["accountAllocations", virtualAccountId] as const;
+  const allocationsKey = ["accountAllocations", virtualAccountId] as const;
 
   const allocationsQuery = useQuery({
-    queryKey,
+    queryKey: allocationsKey,
     queryFn: () => listAccountAllocations(virtualAccountId),
     enabled: !!virtualAccountId,
   });
 
+  const runRecalc = async () => {
+    await invoke("recalculate_portfolio");
+  };
+
   const createMutation = useMutation({
     mutationFn: (payload: NewAccountAllocation) => createAccountAllocation(payload),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast({ title: "Allocation added.", variant: "success" });
-      qc.invalidateQueries({ queryKey });
-    },
-    onError: (e: unknown) => {
-      const message =
-        e instanceof Error
-          ? e.message
-          : typeof e === "string"
-            ? e
-            : JSON.stringify(e, null, 2);
 
-      console.error("createAccountAllocation failed:", e);
+      // ✅ table updates immediately
+      await qc.invalidateQueries({ queryKey: allocationsKey });
 
-      toast({
-        title: "Uh oh! Something went wrong adding this allocation.",
-        description: message,
-        variant: "destructive",
-      });
+      // ✅ recompute snapshots + valuation history
+      await runRecalc();
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: (args: { allocationId: string; payload: UpdateAccountAllocation }) =>
       updateAccountAllocation(args.allocationId, args.payload),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast({ title: "Allocation updated.", variant: "success" });
-      qc.invalidateQueries({ queryKey });
-    },
-    onError: (e: unknown) => {
-      const msg =
-        e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
-      toast({
-        title: "Failed to update allocation.",
-        description: msg,
-        variant: "destructive",
-      });
+      await qc.invalidateQueries({ queryKey: allocationsKey });
+      await runRecalc();
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (allocationId: string) => deleteAccountAllocation(allocationId),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast({ title: "Allocation deleted.", variant: "success" });
-      qc.invalidateQueries({ queryKey });
-    },
-    onError: (e: unknown) => {
-      const msg =
-        e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
-      toast({
-        title: "Failed to delete allocation.",
-        description: msg,
-        variant: "destructive",
-      });
+      await qc.invalidateQueries({ queryKey: allocationsKey });
+      await runRecalc();
     },
   });
 

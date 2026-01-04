@@ -41,6 +41,7 @@ export {
   listenPortfolioUpdateCompleteTauri,
   listenPortfolioUpdateErrorTauri,
   listenPortfolioUpdateStartTauri,
+  listenResourceChangedTauri,
   openCsvFileDialogTauri,
   openDatabaseFileDialogTauri,
   openFileSaveDialogTauri,

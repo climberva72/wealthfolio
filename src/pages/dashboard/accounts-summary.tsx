@@ -1,5 +1,6 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icons } from "@/components/ui/icons";
 import { Separator } from "@/components/ui/separator";
@@ -12,7 +13,6 @@ import { calculatePerformanceMetrics } from "@/lib/utils";
 import { GainAmount, GainPercent, PrivacyAmount } from "@wealthfolio/ui";
 import React, { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge } from "@/components/ui/badge";
 
 interface AccountSummaryDisplayData {
   accountName: string;
@@ -88,6 +88,7 @@ const AccountSummaryComponent = React.memo(
     }
 
     const name = item.accountName;
+    console.log("acct", item.accountId, item.accountName, item.isVirtual);
     const accountId = item.accountId;
 
     const subText = isGroup
@@ -114,7 +115,12 @@ const AccountSummaryComponent = React.memo(
         <div className="flex min-w-0 flex-1 flex-col gap-1 md:gap-1.5">
           <h3 className="flex items-center gap-2 text-sm leading-tight font-semibold md:text-base md:font-semibold">
             <span className="truncate">{name}</span>
-            {item.isVirtual && (<Badge variant="secondary" className="shrink-0"> Virtual</Badge>)}
+            {item.isVirtual && (
+              <Badge variant="secondary" className="shrink-0">
+                {" "}
+                Virtual
+              </Badge>
+            )}
           </h3>
           <p className="text-muted-foreground truncate text-xs md:text-sm">{subText}</p>
         </div>
@@ -244,6 +250,7 @@ export const AccountsSummary = React.memo(() => {
           accountId: acc.id,
           accountType: acc.accountType,
           accountGroup: acc.group ?? null,
+          isVirtual: acc.isVirtual,
           isGroup: false,
         };
       }

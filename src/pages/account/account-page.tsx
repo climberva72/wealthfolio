@@ -47,6 +47,7 @@ import {
   Holding,
   TimePeriod,
   TrackedItem,
+  type AccountAllocation,
 } from "@/lib/types";
 import { calculatePerformanceMetrics, cn } from "@/lib/utils";
 import { PortfolioUpdateTrigger } from "@/pages/dashboard/portfolio-update-trigger";
@@ -58,8 +59,23 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AccountContributionLimit } from "./account-contribution-limit";
 import AccountHoldings from "./account-holdings";
 import AccountMetrics from "./account-metrics";
-
 import VirtualAccountHoldings from "./virtual-account-holdings";
+
+// ✅ allocations table + dialogs
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useAccountAllocations } from "@/hooks/use-account-allocations";
+import { AddAllocationDialog } from "../allocation/components/add-allocation-dialog";
+import { AllocationsTable } from "../allocation/components/allocations-table";
+import { EditAllocationDialog } from "../allocation/components/edit-allocation-dialog";
 
 interface HistoryChartData {
   date: string;
@@ -93,50 +109,61 @@ const AccountPage = () => {
   const [desktopSelectorOpen, setDesktopSelectorOpen] = useState(false);
   const [mobileSelectorOpen, setMobileSelectorOpen] = useState(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const { accounts, isLoading: isAccountsLoading } = useAccounts();
   const account = useMemo(() => accounts?.find((acc) => acc.id === id), [accounts, id]);
 
-  // Query holdings to check if account has any assets
-  //const { data: holdings, isLoading: isHoldingsLoading } = useQuery<Holding[], Error>({
-  //  queryKey: [QueryKeys.HOLDINGS, id],
-  //  queryFn: () => getHoldings(id),
-  //});
+  // ✅ allocations hook (safe even for physical accounts; your hook should gate internally via enabled)
+  const { allocationsQuery, createMutation, updateMutation, deleteMutation } =
+    useAccountAllocations(id);
 
+  const sourceAccounts = useMemo(() => accounts.filter((a) => !a.isVirtual), [accounts]);
+
+  const sourceNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of sourceAccounts) m.set(a.id, a.name);
+    return m;
+  }, [sourceAccounts]);
+
+  // --- allocations UI state for edit/delete ---
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<AccountAllocation | null>(null);
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState<AccountAllocation | null>(null);
+
+  // Query holdings to check if account has any assets (only for physical accounts)
   const { data: holdings, isLoading: isHoldingsLoading } = useQuery<Holding[], Error>({
     queryKey: [QueryKeys.HOLDINGS, id],
     queryFn: () => getHoldings(id),
     enabled: !!id && !!account && !account.isVirtual, // ✅ only physical accounts
   });
 
-  // Check if account has any holdings (including cash)
-  //const hasHoldings = useMemo(() => {
-  //  if (!holdings) return false;
-  //  return holdings.length > 0;
-  //}, [holdings]);
+  const allocationRows = allocationsQuery.data ?? [];
 
   const hasHoldings = useMemo(() => {
     if (!account) return false;
-    if (account.isVirtual) return true; // virtual page decides based on allocations/derived holdings
+
+    if (account.isVirtual) {
+      return allocationRows.length > 0;
+    }
+
     return !!holdings && holdings.length > 0;
-  }, [account, holdings]);
+  }, [account, holdings, allocationRows.length]);
 
   // Group accounts by type for the selector
   const accountsByType = useMemo(() => {
     const grouped: Record<string, Account[]> = {};
     accounts.forEach((acc) => {
-      if (!grouped[acc.accountType]) {
-        grouped[acc.accountType] = [];
-      }
+      if (!grouped[acc.accountType]) grouped[acc.accountType] = [];
       grouped[acc.accountType].push(acc);
     });
     return Object.entries(grouped);
   }, [accounts]);
 
   const accountTrackedItem: TrackedItem | undefined = useMemo(() => {
-    if (account) {
-      return { id: account.id, type: "account", name: account.name };
-    }
+    if (account) return { id: account.id, type: "account", name: account.name };
     return undefined;
   }, [account]);
 
@@ -185,14 +212,9 @@ const AccountPage = () => {
   };
 
   const percentageToDisplay = useMemo(() => {
-    if (selectedIntervalCode === "ALL") {
-      return frontendSimpleReturn;
-    }
-    // For other intervals, if accountPerformance is available, use cumulativeMwr
-    if (accountPerformance) {
-      return accountPerformance.cumulativeMwr ?? 0;
-    }
-    return 0; // Default if no specific logic matches or data is unavailable
+    if (selectedIntervalCode === "ALL") return frontendSimpleReturn;
+    if (accountPerformance) return accountPerformance.cumulativeMwr ?? 0;
+    return 0;
   }, [accountPerformance, selectedIntervalCode, frontendSimpleReturn]);
 
   const handleAccountSwitch = (selectedAccount: Account) => {
@@ -208,19 +230,25 @@ const AccountPage = () => {
         actions={
           <>
             <div className="hidden items-center gap-2 sm:flex">
+              {!account?.isVirtual && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => navigate(`/import?account=${id}`)}
+                  title="Import CSV"
+                >
+                  <Icons.Import className="h-4 w-4" />
+                </Button>
+              )}
+
               <Button
                 variant="outline"
                 size="icon"
-                onClick={() => navigate(`/import?account=${id}`)}
-                title="Import CSV"
-              >
-                <Icons.Import className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => navigate(`/activities/manage?account=${id}`)}
-                title="Record Transaction"
+                title={account?.isVirtual ? "Add Allocation" : "Record Transaction"}
+                onClick={() => {
+                  if (account?.isVirtual) setAddOpen(true);
+                  else navigate(`/activities/manage?account=${id}`);
+                }}
               >
                 <Icons.Plus className="h-4 w-4" />
               </Button>
@@ -233,18 +261,28 @@ const AccountPage = () => {
                 title="Account Actions"
                 description="Manage this account"
                 actions={[
-                  {
-                    icon: "Import",
-                    label: "Import CSV",
-                    description: "Import transactions from file",
-                    onClick: () => navigate(`/import?account=${id}`),
-                  },
+                  ...(!account?.isVirtual
+                    ? ([
+                        {
+                          icon: "Import",
+                          label: "Import CSV",
+                          description: "Import transactions from file",
+                          onClick: () => navigate(`/import?account=${id}`),
+                        },
+                      ] as const)
+                    : []),
+
                   {
                     icon: "Plus",
-                    label: "Record Transaction",
-                    description: "Add a new activity manually",
-                    onClick: () => navigate(`/activities/manage?account=${id}`),
-                  },
+                    label: account?.isVirtual ? "Add Allocation" : "Record Transaction",
+                    description: account?.isVirtual
+                      ? "Add a source allocation to this virtual account"
+                      : "Add a new activity manually",
+                    onClick: () => {
+                      if (account?.isVirtual) setAddOpen(true);
+                      else navigate(`/activities/manage?account=${id}`);
+                    },
+                  } as const,
                 ]}
               />
             </div>
@@ -254,6 +292,7 @@ const AccountPage = () => {
         <div className="flex flex-col" data-tauri-drag-region="true">
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-semibold md:text-xl">{account?.name ?? "Account"}</h1>
+
             {/* Desktop account selector */}
             <div className="hidden sm:block">
               <Popover open={desktopSelectorOpen} onOpenChange={setDesktopSelectorOpen}>
@@ -369,11 +408,13 @@ const AccountPage = () => {
               </Sheet>
             </div>
           </div>
+
           <p className="text-muted-foreground text-sm md:text-base">
             {account?.group ?? account?.currency}
           </p>
         </div>
       </PageHeader>
+
       <PageContent>
         {hasHoldings && !isHoldingsLoading ? (
           <>
@@ -444,7 +485,116 @@ const AccountPage = () => {
               <AccountHoldings accountId={id} />
             )}
 
+            {account?.isVirtual ? (
+              <section className="mt-4">
+                <div className="mb-2 flex flex-row items-center justify-between">
+                  <h2 className="text-md font-semibold">Allocations</h2>
+                </div>
+
+                <AddAllocationDialog
+                  open={addOpen}
+                  onOpenChange={setAddOpen}
+                  virtualAccountId={id}
+                  sourceAccounts={sourceAccounts}
+                  onCreate={(payload) => createMutation.mutate(payload)}
+                  isSubmitting={createMutation.isPending}
+                />
+
+                <AllocationsTable
+                  allocations={allocationRows}
+                  isLoading={allocationsQuery.isLoading}
+                  sourceNameById={sourceNameById}
+                  onEdit={(a) => {
+                    setEditing(a);
+                    setEditOpen(true);
+                  }}
+                  onDelete={(a) => {
+                    setDeleting(a);
+                    setDeleteOpen(true);
+                  }}
+                />
+
+                {/* ---------------- Edit Dialog ---------------- */}
+                <EditAllocationDialog
+                  open={editOpen}
+                  onOpenChange={(o) => {
+                    setEditOpen(o);
+                    if (!o) setEditing(null);
+                  }}
+                  allocation={editing}
+                  virtualAccountId={id}
+                  sourceAccounts={sourceAccounts}
+                  isSubmitting={updateMutation.isPending}
+                  onUpdate={(allocationId, payload) =>
+                    updateMutation.mutate({ allocationId, payload })
+                  }
+                />
+
+                {/* ---------------- Delete Confirm ---------------- */}
+                <AlertDialog
+                  open={deleteOpen}
+                  onOpenChange={(o) => {
+                    setDeleteOpen(o);
+                    if (!o) setDeleting(null);
+                  }}
+                >
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete allocation?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will remove the allocation from the virtual account.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          if (!deleting) return;
+                          deleteMutation.mutate(deleting.id);
+                          setDeleteOpen(false);
+                          setDeleting(null);
+                        }}
+                      >
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </section>
+            ) : null}
           </>
+        ) : account?.isVirtual ? (
+          <div className="flex items-center justify-center py-16">
+            <div className="w-full">
+              {/* keep the dialog mounted so the button can open it */}
+              <AddAllocationDialog
+                open={addOpen}
+                onOpenChange={setAddOpen}
+                virtualAccountId={id}
+                sourceAccounts={sourceAccounts}
+                onCreate={(payload) => createMutation.mutate(payload)}
+                isSubmitting={createMutation.isPending}
+              />
+
+              <div className="flex flex-col items-center justify-center text-center">
+                <div className="text-muted-foreground mb-3">
+                  <Icons.Blocks className="h-10 w-10" />
+                </div>
+                <h3 className="text-base font-semibold">No allocations yet</h3>
+                <p className="text-muted-foreground mt-1 max-w-md text-sm">
+                  Get started by adding a source allocation to build this virtual account.
+                </p>
+
+                <div className="mt-5">
+                  <Button onClick={() => setAddOpen(true)}>
+                    <Icons.Plus className="mr-2 h-4 w-4" />
+                    Add Allocation
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
         ) : (
           <AccountHoldings accountId={id} showEmptyState={true} />
         )}

@@ -7,7 +7,7 @@ use crate::{
 use log::{debug, error};
 use tauri::{State};
 use serde_json::json;
-use wealthfolio_core::accounts::{AccountAllocation, NewAccountAllocation, UpdateAccountAllocation};
+use wealthfolio_core::allocations::{AccountAllocation, NewAccountAllocation, UpdateAccountAllocation};
 
 async fn recalc_virtual_and_emit(
     state: &Arc<ServiceContext>,
@@ -136,4 +136,3 @@ pub async fn delete_account_allocation(
     recalc_virtual_and_emit(&state, &handle, &deleted.virtual_account_id).await?;
     Ok(())
 }
-

@@ -1,5 +1,4 @@
 use crate::{errors::ValidationError, Error};
-use chrono::Utc;
 use diesel::prelude::*;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -130,7 +129,7 @@ pub struct AccountAllocationChangeset {
 
 impl UpdateAccountAllocation {
     /// Convert into a Diesel changeset + a flag for whether to null-out effective_to
-    pub fn into_changeset(self) -> (AccountAllocationChangeset) {
+    pub fn into_changeset(self) -> AccountAllocationChangeset {
         let cs = AccountAllocationChangeset {
             virtual_account_id: self.virtual_account_id,
             source_account_id: self.source_account_id,
@@ -182,7 +181,6 @@ impl From<AccountAllocationDB> for AccountAllocation {
 
 impl From<NewAccountAllocation> for AccountAllocationDB {
     fn from(domain: NewAccountAllocation) -> Self {
-        let now = Utc::now();
         Self {
             id: domain.id.unwrap_or_default(),
             virtual_account_id: domain.virtual_account_id,

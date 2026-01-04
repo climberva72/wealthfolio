@@ -130,7 +130,7 @@ impl AccountAllocationRepositoryTrait for AccountAllocationRepository {
     ) -> Result<AccountAllocation> {
         changes.validate()?;
 
-        let (cs) = changes.into_changeset();
+        let cs = changes.into_changeset();
 
         let mut conn = get_connection(&self.pool)?;
 

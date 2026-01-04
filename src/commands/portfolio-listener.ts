@@ -7,12 +7,14 @@ import {
   listenPortfolioUpdateErrorTauri,
   logger,
   listenMarketSyncCompleteTauri,
+  listenResourceChangedTauri,
   listenMarketSyncStartTauri,
   listenPortfolioUpdateStartWeb,
   listenPortfolioUpdateCompleteWeb,
   listenPortfolioUpdateErrorWeb,
   listenMarketSyncStartWeb,
   listenMarketSyncCompleteWeb,
+  listenResourceChangedWeb,
 } from "@/adapters";
 
 // listenPortfolioUpdateStart
@@ -33,6 +35,25 @@ export const listenPortfolioUpdateStart = async <T>(
     throw error;
   }
 };
+
+export const listenResourceChanged = async <T>(
+  handler: EventCallback<T>,
+): Promise<UnlistenFn> => {
+  try {
+    switch (getRunEnv()) {
+      case RUN_ENV.DESKTOP:
+        return listenResourceChangedTauri<T>(handler);
+      case RUN_ENV.WEB:
+        return listenResourceChangedWeb<T>(handler);
+      default:
+        throw new Error("Unsupported");
+    }
+  } catch (error) {
+    logger.error("Error listen resource:changed.");
+    throw error;
+  }
+};
+
 
 // listenPortfolioUpdateComplete
 export const listenPortfolioUpdateComplete = async <T>(

@@ -2,8 +2,9 @@ use super::registry::ServiceContext;
 use crate::secret_store::shared_secret_store;
 use std::sync::{Arc, RwLock};
 use wealthfolio_core::{
-    accounts::{AccountRepository, AccountService, AccountAllocationRepository, AccountAllocationService},
+    accounts::{AccountRepository, AccountService},
     activities::{ActivityRepository, ActivityService},
+    allocations::{AccountAllocationRepository, AccountAllocationService},
     db::{self, write_actor},
     fx::{FxRepository, FxService, FxServiceTrait},
     goals::{GoalRepository, GoalService},
@@ -85,9 +86,7 @@ pub async fn initialize_context(
     ));
     let account_allocation_service = Arc::new(AccountAllocationService::new(
         account_allocation_repository.clone(),
-        fx_service.clone(),
         transaction_executor.clone(),
-        base_currency.clone(),
     ));
     let activity_service = Arc::new(ActivityService::new(
         activity_repository.clone(),

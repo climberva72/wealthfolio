@@ -1,16 +1,13 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 
 use super::account_allocations_model::{AccountAllocation, NewAccountAllocation, UpdateAccountAllocation};
 use super::account_allocations_traits::{AccountAllocationRepositoryTrait, AccountAllocationServiceTrait};
 use crate::db::DbTransactionExecutor;
 use crate::errors::Result;
-use crate::fx::fx_traits::FxServiceTrait;
 
 /// Service for managing account allocations (Generic over Executor)
 pub struct AccountAllocationService<E: DbTransactionExecutor + Send + Sync + Clone> {
     repository: Arc<dyn AccountAllocationRepositoryTrait>,
-    fx_service: Arc<dyn FxServiceTrait>,
-    base_currency: Arc<RwLock<String>>,
     transaction_executor: E,
 }
 
@@ -18,15 +15,11 @@ impl<E: DbTransactionExecutor + Send + Sync + Clone> AccountAllocationService<E>
     /// Creates a new AccountService instance
     pub fn new(
         repository: Arc<dyn AccountAllocationRepositoryTrait>,
-        fx_service: Arc<dyn FxServiceTrait>,
         transaction_executor: E,
-        base_currency: Arc<RwLock<String>>,
     ) -> Self {
         Self {
             repository,
-            fx_service,
             transaction_executor,
-            base_currency,
         }
     }
 }

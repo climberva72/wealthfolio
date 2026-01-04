@@ -179,11 +179,10 @@ impl PerformanceService {
             let cash_flow = current_net_contribution - prev_net_contribution;
 
             let twr_period_return = {
-                let denominator = prev_total_value + cash_flow;
-                if denominator.is_zero() {
+                if prev_total_value.is_zero() {
                     Decimal::ZERO
                 } else {
-                    (current_total_value / denominator) - one
+                    ((current_total_value - cash_flow) / prev_total_value) - one
                 }
             };
 

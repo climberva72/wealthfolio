@@ -90,28 +90,12 @@ const VirtualAccountHoldings = ({
       let gainBase = 0;
       let gainLocal = 0;
 
-      if (alloc.allocationType === "percent") {
-        const p = alloc.allocationValue / 100;
-        qty = totalQty * p;
-        base = totalBase * p;
-        local = totalLocal * p;
-        gainBase = totalGainBase * p;
-        gainLocal = totalGainLocal * p;
-      } else if (alloc.allocationType === "units") {
-        qty = alloc.allocationValue;
-        if (totalQty !== 0) {
-          const p = qty / totalQty;
-          base = totalBase * p;
-          local = totalLocal * p;
-        }
-      } else if (alloc.allocationType === "value") {
-        base = alloc.allocationValue;
-        if (totalBase !== 0) {
-          const p = base / totalBase;
-          qty = totalQty * p;
-          local = totalLocal * p;
-        }
-      }
+      const p = alloc.allocationValue / 100;
+      qty = totalQty * p;
+      base = totalBase * p;
+      local = totalLocal * p;
+      gainBase = totalGainBase * p;
+      gainLocal = totalGainLocal * p;
 
       const existing = aggregated.get(instrumentId);
 

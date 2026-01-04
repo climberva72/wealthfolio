@@ -26,13 +26,6 @@ const staticNavigation: NavigationProps = {
       label: "View Dashboard",
     },
     {
-      icon: <Icons.Eye className="size-6" />,
-      title: "Allocations",
-      href: "/allocations",
-      keywords: ["home", "overview", "summary"],
-      label: "View Allocations",
-    },
-    {
       icon: <Icons.Insight className="size-6" />,
       title: "Insights",
       href: "/insights",

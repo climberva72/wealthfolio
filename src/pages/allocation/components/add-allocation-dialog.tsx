@@ -4,13 +4,7 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Form,
   FormControl,
@@ -55,12 +49,14 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export function AddAllocationDialog(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   virtualAccountId: string;
   sourceAccounts: Account[];
   onCreate: (payload: NewAccountAllocation) => void;
   isSubmitting?: boolean;
 }) {
-  const { virtualAccountId, sourceAccounts, onCreate, isSubmitting } = props;
+  const { open, onOpenChange, virtualAccountId, sourceAccounts, onCreate, isSubmitting } = props;
 
   const sourceOptions: ResponsiveSelectOption[] = useMemo(
     () =>
@@ -76,8 +72,8 @@ export function AddAllocationDialog(props: {
     defaultValues: {
       sourceAccountId: "",
       assetId: "",
-      percent: 100, // ✅ default 100%
-      effectiveFrom: todayDateInput(), // ✅ default today
+      percent: 100,
+      effectiveFrom: todayDateInput(),
     },
   });
 
@@ -91,9 +87,10 @@ export function AddAllocationDialog(props: {
 
   const assetOptions: ResponsiveSelectOption[] = useMemo(() => {
     if (!holdings) return [];
+
     const seen = new Set<string>();
 
-    return holdings
+    const options = holdings
       .filter((h) => h.instrument?.id)
       .filter((h) => {
         const id = h.instrument!.id;
@@ -105,11 +102,28 @@ export function AddAllocationDialog(props: {
         const instr = h.instrument!;
         const label = instr.symbol
           ? `${instr.symbol}${instr.name ? ` — ${instr.name}` : ""}`
-          : instr.name ?? instr.id;
+          : (instr.name ?? instr.id);
 
         return { label, value: instr.id };
       });
+
+    // Add CASH as a special synthetic “asset”
+    // (assume base currency, handled specially in backend snapshot calc)
+    options.unshift({ label: "Cash", value: "CASH" });
+
+    return options;
   }, [holdings]);
+
+  // When opened, reset to clean defaults (nice UX when opening from "+" repeatedly)
+  useEffect(() => {
+    if (!open) return;
+    form.reset({
+      sourceAccountId: "",
+      assetId: "",
+      percent: 100,
+      effectiveFrom: todayDateInput(),
+    });
+  }, [open, form]);
 
   const submit = (v: FormValues) => {
     const payload: NewAccountAllocation = {
@@ -118,26 +132,16 @@ export function AddAllocationDialog(props: {
       assetId: v.assetId,
       allocationType: "percent",
       allocationValue: v.percent,
-      effectiveFrom: dateInputToIso(v.effectiveFrom), // ✅ now user-controlled
+      effectiveFrom: dateInputToIso(v.effectiveFrom),
       effectiveTo: null,
     };
 
     onCreate(payload);
-
-    form.reset({
-      sourceAccountId: "",
-      assetId: "",
-      percent: 100,
-      effectiveFrom: todayDateInput(),
-    });
+    onOpenChange(false);
   };
 
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button disabled={!!isSubmitting}>Add Allocation</Button>
-      </DialogTrigger>
-
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add Allocation</DialogTitle>
@@ -208,7 +212,6 @@ export function AddAllocationDialog(props: {
               )}
             />
 
-            {/* ✅ NEW: From */}
             <FormField
               control={form.control}
               name="effectiveFrom"

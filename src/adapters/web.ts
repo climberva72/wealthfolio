@@ -718,6 +718,12 @@ export const listenMarketSyncCompleteWeb = async <T>(
   return portfolioEventBridge.listen("market:sync-complete", handler);
 };
 
+export const listenResourceChangedWeb = async <T>(
+  handler: EventCallback<T>,
+): Promise<UnlistenFn> => {
+  return portfolioEventBridge.listen("resource:changed", handler);
+};
+
 // Helpers
 function toBase64(data: Uint8Array | number[]): string {
   const bytes = Array.isArray(data) ? new Uint8Array(data) : data;

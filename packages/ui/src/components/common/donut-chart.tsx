@@ -77,8 +77,11 @@ export const DonutChart: React.FC<DonutChartProps> = ({
   const activeData = data[displayIndex];
   const activeColor = COLORS[displayIndex % COLORS.length];
 
-  const tooltipFormatter = (value: ValueType, name: NameType, entry: Payload<ValueType, NameType>) => {
+  const tooltipFormatter = (value: ValueType | undefined, name: NameType, entry: Payload<ValueType, NameType>) => {
+    if (value == null) return null;
+
     const payload = entry.payload as { currency: string };
+
     return (
       <div className="flex flex-col">
         <span className="text-muted-foreground text-[0.70rem] uppercase">{name}</span>

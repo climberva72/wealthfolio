@@ -60,7 +60,7 @@ export function AccountForm({ defaultValues, onSuccess = () => undefined }: Acco
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
         <DialogHeader>
-          <DialogTitle> {defaultValues?.id ? "Update Account" : "Add Account"}</DialogTitle>
+          <DialogTitle> {defaultValues?.id ? "Update Account" : "Add AccountFoo"}</DialogTitle>
           <DialogDescription>
             {defaultValues?.id
               ? "Update account information"

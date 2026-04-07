@@ -150,18 +150,6 @@ impl ActivityImpact {
     }
 }
 
-pub fn trigger_virtual_allocation_portfolio_job(state: Arc<AppState>, virtual_account_id: String) {
-    enqueue_portfolio_job(
-        state,
-        PortfolioJobConfig {
-            account_ids: Some(vec![virtual_account_id]),
-            symbols: None,
-            refetch_all_market_data: false,
-            force_full_recalculation: true,
-        },
-    );
-}
-
 pub async fn process_portfolio_job(
     state: Arc<AppState>,
     config: PortfolioJobConfig,
